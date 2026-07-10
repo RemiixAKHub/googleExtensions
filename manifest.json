@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Acqueon Media Pauser",
+  "version": "1.3.0",
+  "description": "Pauses media in other tabs when an Acqueon call goes active, resumes on wrapup.",
+
+  "permissions": [
+    "tabs",
+    "scripting",
+    "storage"
+  ],
+
+  "host_permissions": [
+    "*://*.acqueon.com/*",
+    "*://*.amplifyapp.com/*",
+    "*://*.smartagent.app/*",
+    "<all_urls>"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.acqueon.com/*",
+        "*://*.amplifyapp.com/*",
+        "*://*.smartagent.app/*"
+      ],
+      "js": ["detector.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+
+  "action": {
+    "default_title": "Acqueon Media Pauser",
+    "default_popup": "popup.html"
+  }
+}
