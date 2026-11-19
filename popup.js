@@ -337,6 +337,25 @@ $("btn-resume").addEventListener("click", () => {
   });
 });
 
+function requestSafeRecovery(button, originalLabel) {
+  button.disabled = true;
+  button.textContent = "↻ Checking…";
+  chrome.runtime.sendMessage({ type: "RECOVER_SAFELY" }, (resp) => {
+    button.disabled = false;
+    button.textContent = originalLabel;
+    if (chrome.runtime.lastError || !resp?.ok) {
+      showToast("⚠ Recovery could not reach the extension");
+      return;
+    }
+    showToast(`✓ Recovery complete — ${resp.removed} stale record(s) cleared`);
+    setTimeout(fetchDiag, 300);
+  });
+}
+
+$("btn-recover").addEventListener("click", () => {
+  requestSafeRecovery($("btn-recover"), "↻ Recover");
+});
+
 $("btn-ref").addEventListener("click", fetchDiag);
 
 fetchDiag();
@@ -487,14 +506,8 @@ function renderSimple(diag) {
   $("stat-pauses").textContent  = stats.pauses;
   $("stat-resumes").textContent = stats.resumes;
 
-  if (stats.pauses > 0) {
-    const rate = Math.round((stats.resumes / stats.pauses) * 100);
-    $("stat-pause-rate").textContent = rate + "%";
-    $("stat-pause-sub").textContent  = `${stats.resumes} of ${stats.pauses}`;
-  } else {
-    $("stat-pause-rate").textContent = "—";
-    $("stat-pause-sub").textContent  = "";
-  }
+  $("stat-pause-rate").textContent = `${(diag.events || []).length}/25`;
+  $("stat-pause-sub").textContent  = "recent logs only";
 
   // ── Toggle ──
   const enabled = diag.isEnabled !== false;
@@ -543,6 +556,10 @@ $("s-btn-resume").addEventListener("click", () => {
     showToast("✓ Resume triggered");
     setTimeout(fetchDiag, 600);
   });
+});
+
+$("s-btn-recover").addEventListener("click", () => {
+  requestSafeRecovery($("s-btn-recover"), "↻ Recover safely");
 });
 
 $("s-btn-ref").addEventListener("click", fetchDiag);
@@ -609,7 +626,7 @@ $("btn-export").addEventListener("click", () => {
     lines.push("Acqueon Media Pauser — Diagnostics Export");
     lines.push("==========================================");
     lines.push(`Exported:   ${new Date().toLocaleString("en-GB")}`);
-    lines.push(`Version:    v1.5`);
+    lines.push(`Version:    v3.0`);
     lines.push(`Theme:      ${theme}`);
     lines.push("");
     lines.push("── Current State ──");

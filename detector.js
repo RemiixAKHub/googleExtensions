@@ -91,9 +91,16 @@
   // ── Text-based detection (fallback) ──────────────────────────────────────
 
   function detectByText() {
-    const text = document.body ? document.body.innerText : "";
-    if (/\bOngoing\b/i.test(text))      return "active";
-    if (/\bWrap[\s-]?up\b/i.test(text)) return "wrap";
+    // Never scan all page text: hidden history, menus, and instructions can
+    // contain these words and create a false call transition. Text fallback is
+    // limited to visible live/status regions when CSS selectors are unavailable.
+    const candidates = document.querySelectorAll('[role="status"], [aria-live], [data-testid*="status"], [class*="status"]');
+    for (const el of candidates) {
+      if (!el || el.getClientRects().length === 0) continue;
+      const text = el.innerText || "";
+      if (/\bOngoing\b/i.test(text)) return "active";
+      if (/\bWrap[\s-]?up\b/i.test(text)) return "wrap";
+    }
     return null;
   }
 
@@ -131,7 +138,11 @@
 
   function sendHeartbeat() {
     try {
-      chrome.runtime.sendMessage({ type: "ACQUEON_TAB_ALIVE" }, () => {
+      chrome.runtime.sendMessage({
+        type: "ACQUEON_TAB_ALIVE",
+        state: currentState,
+        method: detectionMethod,
+      }, () => {
         void chrome.runtime.lastError;
       });
     } catch (e) {}
@@ -145,6 +156,21 @@
     // only when detectCallState returns idle with no CSS/text signal
     emitState(state, method !== detectionMethod ? method : fallbackMethod);
   }
+
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message?.type === "RECHECK_STATE") {
+      const detected = detectCallState();
+      currentState = detected.state;
+      detectionMethod = detected.method || "safeRecovery";
+      chrome.runtime.sendMessage({
+        type: "CALL_STATE",
+        state: currentState,
+        method: detectionMethod,
+        recoveryOnly: true,
+      }, () => { void chrome.runtime.lastError; });
+      sendHeartbeat();
+    }
+  });
 
   // ── MutationObserver ──────────────────────────────────────────────────────
 

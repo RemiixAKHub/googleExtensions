@@ -312,6 +312,7 @@
     .sbtn-pause  { background: #2d1a1a; color: var(--red);   border-color: #6b2020; }
     .sbtn-resume { background: #1a2d1a; color: var(--green); border-color: #206b20; }
     .sbtn-ref    { flex: 0 0 34px; font-size: 14px; background: var(--surface2); color: var(--muted); }
+    .sbtn-recover { background: #1b2638; color: var(--blue); border-color: #365b87; }
     [data-theme="light"] .sbtn-pause  { background: #fff0ee; border-color: #f5c6c6; }
     [data-theme="light"] .sbtn-resume { background: #efffef; border-color: #a3d9a5; }
 
@@ -535,7 +536,7 @@
   <div class="global-hdr">
     <div class="hdr-icon">🎵</div>
     <div class="hdr-title">Acqueon Media Pauser</div>
-    <div class="hdr-ver">v1.5</div>
+    <div class="hdr-ver">v3.0</div>
     <div class="theme-sw" role="group" aria-label="Colour theme">
       <button class="theme-btn active" id="theme-auto">Auto</button>
       <button class="theme-btn"        id="theme-dark">Dark</button>
@@ -605,15 +606,15 @@
             <div class="stat-box-val v-blue" id="stat-calls">0</div>
           </div>
           <div class="stat-box">
-            <div class="stat-box-lbl">Media Pauses</div>
+            <div class="stat-box-lbl">Pause Events</div>
             <div class="stat-box-val" id="stat-pauses">0</div>
           </div>
           <div class="stat-box">
-            <div class="stat-box-lbl">Resumes</div>
+            <div class="stat-box-lbl">Resume Events</div>
             <div class="stat-box-val v-green" id="stat-resumes">0</div>
           </div>
           <div class="stat-box">
-            <div class="stat-box-lbl">Pause Rate</div>
+            <div class="stat-box-lbl">Event Window</div>
             <div class="stat-box-val" id="stat-pause-rate">—</div>
             <div class="stat-box-rate" id="stat-pause-sub"></div>
           </div>
@@ -654,6 +655,7 @@
         <div class="simple-btn-row">
           <button class="sbtn sbtn-pause"  id="s-btn-pause">⏸ Pause</button>
           <button class="sbtn sbtn-resume" id="s-btn-resume">▶ Resume</button>
+          <button class="sbtn sbtn-recover" id="s-btn-recover" title="Safely re-check detection and remove stale media ownership. Never starts media.">↻ Recover safely</button>
           <button class="sbtn sbtn-ref"    id="s-btn-ref">↻</button>
         </div>
       </div>
@@ -668,7 +670,7 @@
           </div>
           <div class="about-row">
             <span class="about-lbl">Version</span>
-            <span class="about-val" id="about-ver">v1.5</span>
+            <span class="about-val" id="about-ver">v3.0</span>
           </div>
           <div class="about-row">
             <span class="about-lbl">Status</span>
@@ -761,12 +763,13 @@
     <div class="btn-row">
       <button class="btn btn-pause"  id="btn-pause">⏸ Test Pause</button>
       <button class="btn btn-resume" id="btn-resume">▶ Test Resume</button>
+      <button class="btn"            id="btn-recover" title="Safely re-check detection and remove stale media ownership. Never starts media.">↻ Recover</button>
       <button class="btn btn-ref"    id="btn-ref">↻</button>
     </div>
 
     <div class="footer">
       <span class="footer-note" id="footer-t">—</span>
-      <span class="footer-note">Acqueon Media Pauser v1.5</span>
+      <span class="footer-note">Acqueon Media Pauser v3.0</span>
     </div>
 
   </div><!-- /tab-dev -->

@@ -1,4 +1,4 @@
-# Acqueon Media Pauser — Chrome Extension
+# Acqueon Media Pauser V3 — Chrome Extension
 
 Automatically pauses media in other tabs when an Acqueon call goes **Ongoing**,
 and resumes it when the call enters **Wrapup**.
@@ -37,6 +37,13 @@ No API key or sign-in is required.
 | Busy + **Ongoing** | active | Pauses all audible tabs (except acqueon.com) |
 | Busy + **Wrapup** | wrap | Resumes tabs that were paused |
 | Back to Ready | idle | Fallback resume (if wrap missed) |
+
+## V3 safety behaviour
+
+- V3 only resumes a media element or button control that it marked in the current page session.
+- If the page reloads, a player control is replaced, or the user interacts with playback during a call, V3 leaves media paused rather than risking an unexpected start.
+- **Recover safely** re-checks Acqueon state and removes stale ownership records. It never starts media.
+- The popup's event figures are a rolling diagnostic log, not success-rate telemetry.
 
 ---
 

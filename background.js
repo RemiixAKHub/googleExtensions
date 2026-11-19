@@ -15,7 +15,9 @@
  *   Pass 1: try audio/video elements directly
  *   Pass 2: if pass 1 found nothing, try site-specific button click
  *
- * Resume mirrors the same logic in reverse.
+ * Resume is deliberately stricter than pause: it only resumes a DOM element
+ * or control that this extension marked in the current document. It never
+ * clicks a generic Play button merely because a tab was tracked earlier.
  *
  * Hotfix: soft media-control lookup misses are no longer recorded as real
  * health-impacting errors when the extension recovers or no media was present.
@@ -29,6 +31,7 @@ const pausedTabs   = new Set(); // tabId → method used
 const pauseMethod  = new Map(); // tabId → "element" | "button"
 const pausedTabUrls = {};       // v1.6 — tabId → url string (display only, never affects pause/resume)
 let currentState = "idle";
+const callSources = new Map();  // `${tabId}:${frameId}` → { state, method, seenAt }
 
 // ── v1.4: ON/OFF toggle and Acqueon tab ID tracking ───────────────────────
 let isEnabled = true;
@@ -82,7 +85,7 @@ function addError(msg) {
 // fallback scan may inspect a media site that is not currently playing.
 // These messages should not lower health/confidence when a later method
 // succeeds or when there was nothing to pause/resume.
-const SOFT_MEDIA_ERROR_RE = /(pause button not found|play button not found|no media found|no video or button found)/i;
+const SOFT_MEDIA_ERROR_RE = /(pause button not found|play button not found|no media found|no video or button found|ownership proof unavailable)/i;
 
 function isSoftMediaError(msg) {
   return SOFT_MEDIA_ERROR_RE.test(String(msg || ""));
@@ -143,12 +146,33 @@ function persistPausedTabs() {
 // Returns { method, count }  — serialised and run inside the target tab
 
 function injectedPause() {
+  function markAndPauseButton(btn) {
+    btn._cmpWasButton = true;
+    btn._cmpUserIntervened = false;
+    if (!btn._cmpUserIntentListener) {
+      btn._cmpUserIntentListener = true;
+      btn.addEventListener("click", () => {
+        if (btn._cmpWasButton && !btn._cmpClicking) btn._cmpUserIntervened = true;
+      }, true);
+    }
+    btn._cmpClicking = true;
+    btn.click();
+    btn._cmpClicking = false;
+  }
+
   // ── Pass 1: direct audio/video elements ──────────────────────────────
   const mediaEls = document.querySelectorAll("audio, video");
   let count = 0;
   mediaEls.forEach((el) => {
     if (!el.paused && !el._cmpWasPlaying) {
       el._cmpWasPlaying = true;
+      el._cmpUserIntervened = false;
+      if (!el._cmpUserIntentListener) {
+        el._cmpUserIntentListener = true;
+        el.addEventListener("play", () => {
+          if (el._cmpWasPlaying && !el._cmpResuming) el._cmpUserIntervened = true;
+        });
+      }
       el.pause();
       count++;
     }
@@ -182,8 +206,7 @@ function injectedPause() {
       'button[title="Pause"]',
     ]);
     if (btn) {
-      btn._cmpWasButton = true;
-      btn.click();
+      markAndPauseButton(btn);
       return { method: "Spotify button", count: 1 };
     }
     return { method: "Spotify button", count: 0, error: "Pause button not found" };
@@ -198,8 +221,7 @@ function injectedPause() {
       'button[title="Pause"]',
     ]);
     if (btn) {
-      btn._cmpWasButton = true;
-      btn.click();
+      markAndPauseButton(btn);
       return { method: "SoundCloud button", count: 1 };
     }
     return { method: "SoundCloud button", count: 0, error: "Pause button not found" };
@@ -221,8 +243,7 @@ function injectedPause() {
       '[aria-label="Pause"]',
     ]);
     if (btn) {
-      btn._cmpWasButton = true;
-      btn.click();
+      markAndPauseButton(btn);
       return { method: "YouTube button", count: 1 };
     }
     return { method: "YouTube", count: 0, error: "No video or button found" };
@@ -235,8 +256,7 @@ function injectedPause() {
     'button[title="Pause"]',
   ]);
   if (btn) {
-    btn._cmpWasButton = true;
-    btn.click();
+    markAndPauseButton(btn);
     return { method: "generic button", count: 1 };
   }
 
@@ -250,79 +270,30 @@ function injectedResume() {
   const mediaEls = document.querySelectorAll("audio, video");
   let count = 0;
   mediaEls.forEach((el) => {
-    if (el._cmpWasPlaying) {
+    if (el._cmpWasPlaying && !el._cmpUserIntervened) {
+      el._cmpResuming = true;
       el._cmpWasPlaying = false;
-      el.play().catch(() => {});
+      el.play().catch(() => {}).finally(() => { el._cmpResuming = false; });
       count++;
     }
   });
   if (count > 0) return { method: "audio/video element", count };
 
-  // ── Pass 2: site-specific play button ────────────────────────────────
-
-  function findBtn(selectors) {
-    for (const sel of selectors) {
-      try {
-        const els = document.querySelectorAll(sel);
-        for (const el of els) {
-          if (el && typeof el.click === "function") return el;
-        }
-      } catch (_) {}
-    }
-    return null;
+  // Button controls may only resume when the same DOM control is still
+  // present, remains marked, and has not received a user click since pause.
+  // A reload, SPA replacement, or user interaction therefore fails closed.
+  for (const btn of document.querySelectorAll("button, [role='button']")) {
+    if (!btn._cmpWasButton || btn._cmpUserIntervened || typeof btn.click !== "function") continue;
+    const label = `${btn.getAttribute("aria-label") || ""} ${btn.getAttribute("title") || ""} ${btn.textContent || ""}`;
+    if (!/\b(play|resume)\b/i.test(label)) continue;
+    btn._cmpClicking = true;
+    btn._cmpWasButton = false;
+    btn.click();
+    btn._cmpClicking = false;
+    return { method: "verified button", count: 1 };
   }
 
-  const host = location.hostname;
-
-  // ── Spotify ──────────────────────────────────────────────────────────
-  if (host.includes("spotify.com")) {
-    const btn = findBtn([
-      '[aria-label="Play"]',
-      '[aria-label="Play playback"]',
-      '[data-testid="control-button-play"]',
-      'button[title="Play"]',
-    ]);
-    if (btn) { btn.click(); return { method: "Spotify button", count: 1 }; }
-    return { method: "Spotify button", count: 0, error: "Play button not found" };
-  }
-
-  // ── SoundCloud ───────────────────────────────────────────────────────
-  if (host.includes("soundcloud.com")) {
-    const btn = findBtn([
-      '[aria-label="Play current"]',
-      '[aria-label="Play"]',
-      'button.playControl[title*="Play"]',
-      'button[title="Play"]',
-    ]);
-    if (btn) { btn.click(); return { method: "SoundCloud button", count: 1 }; }
-    return { method: "SoundCloud button", count: 0, error: "Play button not found" };
-  }
-
-  // ── YouTube ──────────────────────────────────────────────────────────
-  if (host.includes("youtube.com") || host.includes("youtu.be")) {
-    const vid = document.querySelector("video");
-    if (vid && vid.paused) {
-      vid.play().catch(() => {});
-      return { method: "YouTube video element", count: 1 };
-    }
-    const btn = findBtn([
-      '.ytp-play-button[aria-label*="Play"]',
-      '[aria-label="Play (k)"]',
-      '[aria-label="Play"]',
-    ]);
-    if (btn) { btn.click(); return { method: "YouTube button", count: 1 }; }
-    return { method: "YouTube", count: 0, error: "No video or button found" };
-  }
-
-  // ── Generic ───────────────────────────────────────────────────────────
-  const btn = findBtn([
-    '[aria-label="Play"]',
-    '[aria-label*="Play"]',
-    'button[title="Play"]',
-  ]);
-  if (btn) { btn.click(); return { method: "generic button", count: 1 }; }
-
-  return { method: "none", count: 0, error: "No media found" };
+  return { method: "none", count: 0, error: "Ownership proof unavailable; media left paused" };
 }
 
 // ── Protected hostname list ───────────────────────────────────────────────
@@ -366,19 +337,12 @@ async function scanAndPause() {
   const methods  = [];
   const softIssues = [];
 
-  // First pass: audible tabs
+  // Do not rely on Chrome's audible flag: it can lag behind real playback and
+  // causes missed pauses when another tab is already marked audible.
   let tabs = [];
-  try { tabs = await chrome.tabs.query({ audible: true }); } catch (_) {}
-
-  // Second pass: if nothing audible, check all tabs.
-  // Soft "no media / button not found" results from this fallback are not
-  // errors — they simply mean the page is not currently pauseable.
-  let usedFallbackScan = false;
-  if (tabs.length === 0) {
-    usedFallbackScan = true;
-    try { tabs = await chrome.tabs.query({}); } catch (_) {}
-    addEvent("No audible tabs — scanning all tabs");
-  }
+  try { tabs = await chrome.tabs.query({}); } catch (_) {}
+  const usedFallbackScan = true;
+  addEvent("Scanning open tabs for active media");
 
   for (const tab of tabs) {
     // v1.5: single authoritative protection check — never pauses call-control tabs
@@ -489,6 +453,67 @@ async function scanAndResume() {
   return { totalCount, methods };
 }
 
+function pruneCallSources() {
+  const cutoff = Date.now() - 30000;
+  for (const [key, source] of callSources) {
+    if (source.seenAt < cutoff) callSources.delete(key);
+  }
+}
+
+function aggregateCallState() {
+  pruneCallSources();
+  const states = [...callSources.values()].map((source) => source.state);
+  if (states.includes("active")) return "active";
+  if (states.includes("wrap")) return "wrap";
+  return "idle";
+}
+
+function injectedOwnershipCheck() {
+  const markedMedia = [...document.querySelectorAll("audio, video")]
+    .some((el) => el._cmpWasPlaying && !el._cmpUserIntervened);
+  const markedButton = [...document.querySelectorAll("button, [role='button']")]
+    .some((el) => el._cmpWasButton && !el._cmpUserIntervened);
+  return markedMedia || markedButton;
+}
+
+async function recoverSafely() {
+  let removed = 0;
+  for (const tabId of [...pausedTabs]) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: injectedOwnershipCheck,
+      });
+      if (!results?.[0]?.result) {
+        pausedTabs.delete(tabId);
+        pauseMethod.delete(tabId);
+        delete pausedTabUrls[tabId];
+        removed++;
+      }
+    } catch (_) {
+      pausedTabs.delete(tabId);
+      pauseMethod.delete(tabId);
+      delete pausedTabUrls[tabId];
+      removed++;
+    }
+  }
+  persistPausedTabs();
+  updateDiag({ pausedTabCount: pausedTabs.size, lastAction: "Safe Recovery" });
+  addEvent(`Safe recovery completed — removed ${removed} stale ownership record(s)`);
+
+  // Ask known detector frames to publish their current state again. This is
+  // reconciliation only; it never causes a resume on its own.
+  const protectedTabs = await chrome.tabs.query({});
+  for (const tab of protectedTabs) {
+    if (isProtectedTab(tab)) chrome.tabs.sendMessage(tab.id, { type: "RECHECK_STATE" }).catch(() => {});
+  }
+  for (const [key] of callSources) {
+    const [tabId, frameId] = key.split(":").map(Number);
+    chrome.tabs.sendMessage(tabId, { type: "RECHECK_STATE" }, { frameId }).catch(() => {});
+  }
+  return { removed, remaining: pausedTabs.size };
+}
+
 // ── Core handlers ─────────────────────────────────────────────────────────
 
 async function handleActive(detMethod) {
@@ -579,6 +604,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } else {
       updateDiag({ acqueonTabDetected: true });
     }
+    if (sender?.tab?.id != null) {
+      callSources.set(`${sender.tab.id}:${sender.frameId ?? 0}`, {
+        state: message.state || "idle",
+        method: message.method || "heartbeat",
+        seenAt: Date.now(),
+      });
+    }
     sendResponse({ ok: true });
     return true;
   }
@@ -622,6 +654,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "RECOVER_SAFELY") {
+    recoverSafely().then((result) => sendResponse({ ok: true, ...result }));
+    return true;
+  }
+
   if (message?.type === "CALL_STATE") {
     // Track the tab ID for any call-control host, not just acqueon.com.
     // Uses PROTECTED_HOSTNAMES as the single source of truth so this
@@ -640,8 +677,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!isEnabled) { sendResponse({ ok: true, reason: "disabled" }); return true; }
 
     const { state, method } = message;
-    switch (state) {
-      case "active": handleActive(method).then(() => sendResponse({ ok: true })); return true;
+    if (sender?.tab?.id != null) {
+      callSources.set(`${sender.tab.id}:${sender.frameId ?? 0}`, {
+        state,
+        method: method || "unknown",
+        seenAt: Date.now(),
+      });
+    }
+    const aggregateState = aggregateCallState();
+    const aggregateMethod = method || "unknown";
+    if (message.recoveryOnly) {
+      currentState = aggregateState;
+      updateDiag({
+        currentState: aggregateState,
+        lastStateChange: ts(),
+        detectionMethod: aggregateMethod,
+      });
+      addEvent(`Safe recovery rechecked Acqueon state: ${aggregateState}`);
+      sendResponse({ ok: true, recoveryOnly: true });
+      return true;
+    }
+    switch (aggregateState) {
+      case "active": handleActive(aggregateMethod).then(() => sendResponse({ ok: true })); return true;
       case "wrap":   handleResume("wrap").then(() => sendResponse({ ok: true })); return true;
       case "idle":
         if (currentState === "active" || currentState === "wrap") {
@@ -673,5 +730,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === acqueonTabId) {
     acqueonTabId = null;
     updateDiag({ acqueonTabDetected: false, acqueonTabId: null });
+  }
+  for (const key of callSources.keys()) {
+    if (key.startsWith(`${tabId}:`)) callSources.delete(key);
   }
 });

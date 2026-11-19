@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Acqueon Media Pauser",
-  "version": "1.3.0",
+  "version": "3.0.0",
   "description": "Pauses media in other tabs when an Acqueon call goes active, resumes on wrapup.",
 
   "permissions": [
